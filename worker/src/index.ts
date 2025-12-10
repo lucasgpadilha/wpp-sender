@@ -1,8 +1,16 @@
 import { Worker } from 'bullmq';
 import dotenv from 'dotenv';
-import setup from './setup';
+import setupSchema from './setup_schema';
+import fixCascade from './fix_cascade';
+import schemaMigrationV4 from './schema_migration_v4';
+import schemaMigrationV5 from './schema_migration_v5';
+import fixMissingFields from './fix_missing_fields';
+import fixMediaRelation from './fix_media_relation';
 import processor from './processor';
-import { Dispatcher } from './dispatcher';
+import { Calculator } from './calculator';
+import { DispatcherV2 } from './dispatcher_v2';
+import schemaMigrationV6 from './schema_migration_v6';
+import fixUiDisplay from './fix_ui_display';
 
 dotenv.config();
 
@@ -13,11 +21,22 @@ const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 async function main() {
     console.log('Worker starting...');
 
-    // Run Setup
-    await setup();
+    // Run Schema Setup & Fixes
+    await setupSchema();
+    await fixCascade();
+    await schemaMigrationV4();
+    await schemaMigrationV5();
+    await fixMissingFields();
+    await fixMediaRelation();
+    await schemaMigrationV6();
+    await fixUiDisplay();
 
-    // Start Dispatcher
-    const dispatcher = new Dispatcher();
+    // Start Calculator
+    const calculator = new Calculator();
+    calculator.start();
+
+    // Start Dispatcher V2
+    const dispatcher = new DispatcherV2();
     dispatcher.start();
 
     // Start BullMQ Worker

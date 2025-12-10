@@ -1,9 +1,7 @@
-:80 {
-    # Directus is at root
+cms.autoflow.space {
     reverse_proxy localhost:8055
+}
 
-    # Evolution API path
-    handle_path /evolution/* {
-        reverse_proxy localhost:8080
-    }
+api.autoflow.space {
+    reverse_proxy localhost:8080
 }

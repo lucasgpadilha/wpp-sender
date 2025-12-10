@@ -1,70 +1,87 @@
-# WhatsApp Blast Marketing System
+# Autoflow.space - Marketing Automation System
 
-A turnkey WhatsApp marketing system running on Oracle Cloud (ARM64), featuring a Caddy reverse proxy, Directus CMS, Evolution API v2, and a custom Node.js Worker for intelligent message dispatching.
+A robust, scalable WhatsApp marketing automation platform running on Oracle Cloud (ARM64). It features a secure reverse proxy, a headless CMS for management, an API gateway for WhatsApp connection, and an intelligent worker for batch processing.
 
-## Stack
-- **Proxy**: Caddy (Auto SSL)
-- **CMS**: Directus (Headless)
-- **Gateway**: Evolution API v2
-- **Worker**: Node.js + BullMQ + Groq AI
-- **Database**: Postgres + Redis
+## 🏗️ Architecture
 
-## Prerequisites
-- Docker & Docker Compose installed.
-- Oracle Cloud ARM64 instance (or any Linux server).
-- A valid domain name (optional, but recommended for SSL).
+### 1. Infrastructure & Domain
+- **Domain:** `autoflow.space`
+- **Reverse Proxy:** Caddy (Automatic SSL/HTTPS)
+    - `https://cms.autoflow.space` -> Directus (Port 8055)
+    - `https://api.autoflow.space` -> Evolution API (Port 8080)
+- **Containerization:** Docker & Docker Compose (Host Network Mode)
 
-## Setup Instructions
+### 2. Data Model (Directus)
+The system uses a relational schema to manage campaigns and contacts:
+- **`configuracoes_gerais` (Singleton):** Central control for delays, active hours, and active instances.
+- **`campanhas`:** Campaign management with status workflow (`Draft` -> `Calculando` -> `Pronta` -> `Enviando` -> `Concluída`).
+- **`contatos`:** Contact database with M2M tagging support.
+- **`tags`:** Segmentation labels (e.g., "VIP", "Lead Frio").
+- **`fila_envios`:** Job queue log tracking the status of every single message dispatch.
 
-### 1. Configuration
-Copy the example environment file and edit it:
+### 3. Worker Service (The Brain)
+The Node.js worker operates in two distinct modes:
+
+#### Mode A: The Calculator (`calculator.ts`)
+- **Trigger:** Campaign status set to `Calculando`.
+- **Action:**
+    1.  Identifies target contacts based on Campaign Tags.
+    2.  Populates `fila_envios` with pending jobs.
+    3.  Calculates estimated time based on configured delays.
+    4.  Updates Campaign status to `Pronta`.
+
+#### Mode B: The Dispatcher V2 (`dispatcher_v2.ts`)
+- **Trigger:** Campaign status set to `Enviando`.
+- **Action:**
+    1.  Checks `configuracoes_gerais` for allowed sending windows (Start/End time).
+    2.  Polls `fila_envios` for pending jobs.
+    3.  Dispatches jobs to the Redis Queue (`wpp-queue`).
+
+#### Mode C: The Processor (`processor.ts`)
+- **Action:**
+    1.  Consumes jobs from Redis.
+    2.  Applies dynamic delays (randomized within min/max range).
+    3.  **AI Rewrite:** Uses Llama 3.3 (via Groq) to rewrite messages per contact (optional).
+    4.  **Sending:** Dispatches via Evolution API.
+    5.  **Logging:** Updates `fila_envios` with success/failure logs.
+
+---
+
+## 🚀 Usage Guide
+
+### 1. Initial Setup
+1.  Access **Directus** (`https://cms.autoflow.space`).
+2.  Go to **Configurações Gerais** and set:
+    - **Delay Min/Max:** e.g., 30s / 120s.
+    - **Horário:** e.g., 08:00 to 20:00.
+    - **Instâncias Ativas:** List of Evolution instance names (e.g., `["Chip01"]`).
+
+### 2. Creating a Campaign
+1.  **Create Tags:** Define your segments in the `tags` collection.
+2.  **Import Contacts:** Add contacts to `contatos` and assign Tags.
+3.  **Draft Campaign:** Create a new campaign in `campanhas`.
+    - Select **Tags Alvo**.
+    - Write **Msg Base**.
+    - Set Status to **Calculando**.
+4.  **Review:** Wait for the Worker to calculate stats. Status will change to **Pronta**.
+5.  **Launch:** Change Status to **Enviando**.
+
+---
+
+## 🛠️ Technical Commands
+
+### Logs
+Monitor the worker logic:
 ```bash
-cp .env.example .env
-nano .env
+docker compose logs -f worker
 ```
-**Critical Variables:**
-- `PUBLIC_URL`: The URL where Directus will be accessible (e.g., `http://your-ip:8055` or `https://painel.yourdomain.com`).
-- `EVOLUTION_API_KEY`: Set a strong master key for Evolution API.
-- `GROQ_API_KEY`: Your Groq API key for AI message rewriting.
-- `DIRECTUS_STATIC_TOKEN`: Set a static token for the Worker to authenticate with Directus.
 
-### 2. Start the System
-Run the following command to start all services:
+### Restart Services
 ```bash
-docker compose up -d
+docker compose restart worker
 ```
 
-### 3. Evolution API Configuration (CRITICAL)
-The system cannot automatically login to WhatsApp. You must do this manually:
-1.  Access Evolution API at `http://<YOUR_IP>:8080` (or your configured domain).
-2.  Login with the `AUTHENTICATION_API_KEY` you set in `.env`.
-3.  **Create a new Instance** named `Chip01` (or whatever you prefer, but match it in Directus later).
-4.  **Scan the QR Code** with your WhatsApp app.
-5.  **Copy the API Token** for this specific instance.
-
-### 4. Directus Setup
-1.  Access Directus at `http://<YOUR_IP>:8055`.
-2.  Login with `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
-3.  The Worker should have automatically created the collections: `campanhas`, `instancias`, `contatos`.
-
-### 5. Connect Instance
-1.  In Directus, go to the `instancias` collection.
-2.  Create a new item:
-    - **Nome**: `Chip Principal`
-    - **Evolution Instance Name**: `Chip01` (Must match what you created in Evolution API)
-    - **Token Evolution**: Paste the token you copied in Step 3.
-    - **Status Ativo**: Checked (True).
-
-## Usage
-
-### Sending a Campaign
-1.  **Create Contacts**: Add contacts to the `contatos` collection.
-2.  **Create Campaign**: Add a campaign in `campanhas`.
-    - **Prompt IA**: Instructions for the AI (e.g., "Rewrite this to be friendly and professional").
-    - **Msg Base**: The core message (can use `{{variavel}}`).
-3.  **Dispatch**: The current worker implementation processes jobs from a queue. You will need to trigger the jobs.
-    *Note: The current setup requires a mechanism to push jobs to the queue. You can add a Directus Hook or a simple script to push jobs to Redis `wpp-queue`.*
-
-## Troubleshooting
-- **Logs**: Check logs with `docker compose logs -f worker` or `docker compose logs -f evolution`.
-- **Persistence**: Data is saved in the `./volumes` directory (mapped in docker-compose).
+### Full Rebuild
+```bash
+docker compose up -d --build
+```
