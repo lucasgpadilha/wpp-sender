@@ -5,3 +5,4 @@ dist
 coverage
 .gemini
 *.log
+node_modules/
